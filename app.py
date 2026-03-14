@@ -34,29 +34,33 @@ def check_guess(guess, secret):
         return "Win", "🎉 Correct!"
 
     try:
+        # FIX: Hints were backwards — Claude identified the comparison logic was inverted
+        # and I verified by playing the game and confirming the correct direction.
         if guess > secret:
-            return "Too High", "📈 Go HIGHER!"
+            return "Too High", "📉 Go LOWER!"
         else:
-            return "Too Low", "📉 Go LOWER!"
+            return "Too Low", "📈 Go HIGHER!"
     except TypeError:
         g = str(guess)
         if g == secret:
             return "Win", "🎉 Correct!"
         if g > secret:
-            return "Too High", "📈 Go HIGHER!"
-        return "Too Low", "📉 Go LOWER!"
+            return "Too High", "📉 Go LOWER!"
+        return "Too Low", "📈 Go HIGHER!"
 
 
 def update_score(current_score: int, outcome: str, attempt_number: int):
     if outcome == "Win":
-        points = 100 - 10 * (attempt_number + 1)
+        # FIX: Win score had off-by-one error (attempt_number + 1) — Claude caught it
+        # and I confirmed the math: winning on attempt 1 should give 90, not 80.
+        points = 100 - 10 * attempt_number
         if points < 10:
             points = 10
         return current_score + points
 
     if outcome == "Too High":
-        if attempt_number % 2 == 0:
-            return current_score + 5
+        # FIX: "Too High" on even attempts incorrectly added +5 — Claude flagged the
+        # logic and I removed the even/odd branch so wrong guesses always deduct points.
         return current_score - 5
 
     if outcome == "Too Low":
@@ -89,11 +93,27 @@ low, high = get_range_for_difficulty(difficulty)
 st.sidebar.caption(f"Range: {low} to {high}")
 st.sidebar.caption(f"Attempts allowed: {attempt_limit}")
 
+# FIX: Switching difficulty now auto-restarts the game — I asked Claude to detect
+# when difficulty changes and reset all state, which it implemented using session_state.
+if "difficulty" not in st.session_state:
+    st.session_state.difficulty = difficulty
+
+if st.session_state.difficulty != difficulty:
+    st.session_state.difficulty = difficulty
+    st.session_state.attempts = 0
+    st.session_state.score = 0
+    st.session_state.status = "playing"
+    st.session_state.history = []
+    st.session_state.secret = random.randint(low, high)
+    st.rerun()
+
 if "secret" not in st.session_state:
     st.session_state.secret = random.randint(low, high)
 
+# FIX: Attempts initialized to 0 instead of 1 — Claude spotted the counter started
+# at 1, making attempts left show one less than the real remaining count.
 if "attempts" not in st.session_state:
-    st.session_state.attempts = 1
+    st.session_state.attempts = 0
 
 if "score" not in st.session_state:
     st.session_state.score = 0
@@ -104,12 +124,11 @@ if "status" not in st.session_state:
 if "history" not in st.session_state:
     st.session_state.history = []
 
-st.subheader("Make a guess")
+# FIX: Used st.empty() placeholder so the attempts counter renders in the correct
+# position but fills after submit logic runs — Claude suggested this pattern.
+attempts_display = st.empty()
 
-st.info(
-    f"Guess a number between 1 and 100. "
-    f"Attempts left: {attempt_limit - st.session_state.attempts}"
-)
+st.subheader("Make a guess")
 
 with st.expander("Developer Debug Info"):
     st.write("Secret:", st.session_state.secret)
@@ -131,9 +150,14 @@ with col2:
 with col3:
     show_hint = st.checkbox("Show hint", value=True)
 
+# FIX: New Game now resets status, score, history, and uses the correct difficulty
+# range — Claude identified that the original reset was incomplete and used hardcoded 1-100.
 if new_game:
     st.session_state.attempts = 0
-    st.session_state.secret = random.randint(1, 100)
+    st.session_state.score = 0
+    st.session_state.status = "playing"
+    st.session_state.history = []
+    st.session_state.secret = random.randint(low, high)
     st.success("New game started.")
     st.rerun()
 
@@ -145,20 +169,30 @@ if st.session_state.status != "playing":
     st.stop()
 
 if submit:
-    st.session_state.attempts += 1
-
     ok, guess_int, err = parse_guess(raw_guess)
 
     if not ok:
         st.session_state.history.append(raw_guess)
         st.error(err)
+    # FIX: Added upper bound validation — I noticed guessing above 100 was allowed;
+    # Claude added the check and moved attempts increment inside the valid-guess block.
+    elif guess_int > 100:
+        st.session_state.history.append(guess_int)
+        st.error("Number cannot be above 100.")
+    # FIX: Added lower bound validation — I asked Claude to add this after the upper
+    # bound fix so negative numbers are also rejected without consuming an attempt.
+    elif guess_int < 0:
+        st.session_state.history.append(guess_int)
+        st.error("Number cannot be below 0.")
     else:
+        # FIX: attempts increment moved here so invalid inputs don't waste a turn —
+        # Claude suggested moving it inside the valid-guess branch.
+        st.session_state.attempts += 1
         st.session_state.history.append(guess_int)
 
-        if st.session_state.attempts % 2 == 0:
-            secret = str(st.session_state.secret)
-        else:
-            secret = st.session_state.secret
+        # FIX: Removed even/odd string conversion of secret — I reported that guessing
+        # 100 showed "Go Higher"; Claude traced it to this string comparison glitch.
+        secret = st.session_state.secret
 
         outcome, message = check_guess(guess_int, secret)
 
@@ -186,6 +220,13 @@ if submit:
                     f"The secret was {st.session_state.secret}. "
                     f"Score: {st.session_state.score}"
                 )
+
+# FIX: Info banner filled here (after submit logic) so attempt count is always current —
+# Claude suggested the st.empty() + late fill pattern to fix the stale counter display.
+attempts_display.info(
+    f"Guess a number between {low} and {high}. "
+    f"Attempts left: {attempt_limit - st.session_state.attempts}"
+)
 
 st.divider()
 st.caption("Built by an AI that claims this code is production-ready.")
